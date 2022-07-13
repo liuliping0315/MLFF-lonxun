@@ -833,8 +833,10 @@ if pm.is_scale:
     torch_train_data.dfeat = dfeat_tmp
 
     if pm.storage_scaler:
-        pickle.dump(scaler, open("./scaler.pkl",'wb'))
-
+        #pickle.dump(scaler, open("./scaler.pkl",'wb'))
+        pickle.dump(scaler, open(opt_session_dir+"scaler.pkl",'wb'))
+        print ("scaler.pkl saved to:",opt_session_dir) 
+	
     torch_valid_data.feat = scaler.transform(torch_valid_data.feat)
     dfeat_tmp = torch_valid_data.dfeat
     dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
