@@ -91,8 +91,8 @@ if pm.isNewMd100:
     if hasattr(pm, 'imodel'):
         imodel = pm.imodel
 
-    if hasattr(pm, 'num_process'):
-        num_process = pm.num_process
+    if hasattr(pm, 'md_num_process'):
+        num_process = pm.md_num_process
     print (imodel)
     md100.run_md100(imodel=imodel, atom_type=pm.atomType, num_process=num_process)
 
