@@ -296,7 +296,7 @@ isMdProfile=False
 gpu_mem  = 0.9       # tensorflow used gpu memory
 cuda_dev = '0'       # unoccupied gpu, using 'nvidia-smi' cmd
 cupyFeat=True
-tf_dtype = 'float32' # dtype of tensorflow trainning, 'float32' faster than 'float64'
+tf_dtype = 'float64' # dtype of tensorflow trainning, 'float32' faster than 'float64'
 
 test_ratio = 0.2
 is_rand_seper = False 
