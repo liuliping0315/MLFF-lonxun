@@ -80,10 +80,10 @@ def read_scaler():
     for i in range(pm.ntypes):
         fout.write('m12= %d, 0, 1\n' % (scaler.scale_.shape[0]))
         for j in range(scaler.scale_.shape[0]):
-            fout.write('%5d  %5d   %f\n' % (j, 0, scaler.scale_[j]))
+            fout.write('%5d  %5d   %.12f\n' % (j, 0, scaler.scale_[j]))
         fout.write('m12= %d, 0, 1\n' % (scaler.scale_.shape[0]))
         for j in range(scaler.scale_.shape[0]):
-            fout.write('%5d  %5d   %f\n' % (j, 0, scaler.min_[j])) # x_std = x * scale_ + min_
+            fout.write('%5d  %5d   %.12f\n' % (j, 0, scaler.min_[j])) # x_std = x * scale_ + min_
     fout.close()
     # liuliping data_scaler.txt end
     
