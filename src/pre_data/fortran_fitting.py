@@ -224,6 +224,68 @@ def fit():
     FeatCollectIn()
     # calcFitFeatNum2AndPenaltyTerm()
     runFit()
+def gen_vv_input():
+    if not hasattr(pm, 'vv_files'):
+        tmp_vv_files = [['',''] for tmp in range(10)]
+        for i in range(10):
+            tmp_vv_files[i][0] = 'input/vv_%d_0' % (i)
+            tmp_vv_files[i][1] = 'input/vv_%d_1' % (i)
+        setattr(pm,'vv_files', tmp_vv_files)
+    if not hasattr(pm, 'vv_use_3'):
+        setattr(pm, 'vv_use_3', 0)
+        
+    for i in range(len(pm.atomType)):
+        fout0 = open(pm.vv_files[i][0], 'w')
+        fout0.write('%d %d\n' % (i+1, -1))
+        fout0.write('%d\n' % (pm.vv_use_3))
+        fout0.write('1\n')
+        fout0.close()
+        fout1 = open(pm.vv_files[i][1], 'w')
+        fout1.write('%d %d\n' % (i+1, -1))
+        fout1.write('%d\n' % (pm.vv_use_3))
+        fout1.write('0\n')
+        fout1.write('2000\n')
+        fout1.close()
+    fout = open(pm.fitModelDir+'/select_VV.input', 'w')
+    fout.write('10\n')
+    fout.write('%d\n' % (2000*len(pm.atomType)))
+    fout.write('20\n')
+    fout.write('%d\n' % (pm.vv_use_3))
+    fout.write('20,4,2.0,0.001\n')
+    fout.close()
+    fout = open('input/vv_disp', 'w')
+    fout.write(('1\n'))
+    fout.close()
+
+def runFitVV():
+    for i in range(len(pm.atomType)):
+        command0 = 'select_mm_VV.r  < '+pm.vv_files[i][0]
+        command1 = 'select_mm_VV.r  < '+pm.vv_files[i][1]
+        print(command0)
+        os.system(command0)
+        print(command1)
+        os.system(command1)
+
+    command_disp = 'feat_dist_xp.r < input/vv_disp'
+    print(command_disp)
+    os.system(command_disp)
+    command_fitvv = 'fit_VV_forceMM.r'
+    print(command_fitvv)
+    os.system(command_fitvv)
+    command_calcvv = 'calc_VV_forceMM.r'
+    print(command_calcvv)
+    os.system(command_calcvv)
+    
+
+def fitVV():
+    # makeFitDirAndCopySomeFiles()
+    # readFittingParameters()
+    copyData()
+    writeFitInput()
+    FeatCollectIn()
+    gen_vv_input()
+    # calcFitFeatNum2AndPenaltyTerm()
+    runFitVV()
     
 
 if __name__=='__main__':   

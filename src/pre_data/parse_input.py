@@ -43,32 +43,32 @@ def parse_input():
     
     
     if hasattr(pm, 'nFeatures') and not hasattr(pm, 'MLFF_dmirror_cfg'):
-        pm.MLFF_dmirror_cfg = [
+        setattr(pm, 'MLFF_dmirror_cfg', [
                             ('linear', pm.nFeatures, 1, True),
-                       ]
+                       ])
 
     if hasattr(pm, 'nFeatures') and  not hasattr(pm, 'MLFF_dmirror_cfg1'):
-        pm.MLFF_dmirror_cfg1 = [
+        setattr(pm, 'MLFF_dmirror_cfg1', [
                             ('linear', pm.nFeatures, 30, True),
                             ('activation',),
                             ('linear', 30, 60, True),
                             ('activation',),
                             ('linear', 60, 1, True)
-                       ]
+                       ])
     if hasattr(pm, 'nFeatures') and  not hasattr(pm, 'MLFF_dmirror_cfg2'):
-        pm.MLFF_dmirror_cfg2 = [
+        setattr(pm, 'MLFF_dmirror_cfg2', [
                             ('linear', pm.nFeatures, 1, True),
                             ('activation',),
                             ('linear', 1, 1, True)
-                       ]
+                       ])
     if hasattr(pm, 'nFeatures') and  not hasattr(pm, 'MLFF_dmirror_cfg3'):
-        pm.MLFF_dmirror_cfg3 = [
+        setattr(pm, 'MLFF_dmirror_cfg3', [
                             ('linear', pm.nFeatures, 10, True),
                             ('activation',),
                             ('linear', 10, 3, True),
                             ('activation',),
                             ('linear', 3, 1, True)
-                       ]
+                       ])
     print('done')
     print('writing parameters to output/out.parameters.py... ', end='')
     all_para = pm.__dir__()

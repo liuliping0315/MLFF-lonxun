@@ -69,6 +69,9 @@ else:
 if pm.isFitLinModel:
     ff.fit()
 
+if pm.isFitVVModel:
+    ff.fitVV()
+
 if pm.isRunMd:
     # import preparatory_work as ppw
     from md_runner import MdRunner
