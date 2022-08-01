@@ -1,4 +1,3 @@
-  !// forquill v1.01 beta www.fcode.cn
 module convert_dfeat
     !implicit double precision (a-h, o-z)
     implicit none
@@ -28,40 +27,80 @@ module convert_dfeat
     subroutine deallo()
 
         deallocate(dfeat)
-        ! deallocate(dfeat_scaled)
-        ! deallocate(feat)
-        ! deallocate(energy)
-        ! deallocate(force)
-        ! deallocate(iatom)
-        ! deallocate(list_neigh)
 
     end subroutine deallo
 
     subroutine allo(nfeat0m,natom,m_neigh)
-      integer(4), intent(in) :: nfeat0m,natom,m_neigh
-      allocate(dfeat(nfeat0m,natom,m_neigh,3))
-      dfeat(:,:,:,:)=0.0
 
-  end subroutine allo
+        integer(4), intent(in) :: nfeat0m,natom,m_neigh
+        allocate(dfeat(nfeat0m,natom,m_neigh,3))
+        dfeat(:,:,:,:)=0.0
 
-  subroutine conv_dfeat(image_Num,ipos,natom_p,num_tmp,dfeat_tmp,jneigh_tmp,ifeat_tmp,iat_tmp)
+    end subroutine allo
 
-      integer(4)  :: jj,ii,i_p,i,j
-      integer(4), intent(in) :: image_Num,num_tmp,ipos,natom_p
+    subroutine conv_dfeat(image_Num,ipos,natom_p,num_tmp,dfeat_tmp,jneigh_tmp,ifeat_tmp,iat_tmp)
 
-      real*8,  dimension (:,:),intent(in) :: dfeat_tmp
-      integer(4),dimension (:),intent(in) :: iat_tmp,jneigh_tmp,ifeat_tmp
-      ! integer(4),dimension(3) :: feat_shape,list_shape
+        integer(4)  :: jj,ii,i_p,i,j
+        integer(4), intent(in) :: image_Num,num_tmp,ipos,natom_p
+
+        real*8,  dimension (:,:),intent(in) :: dfeat_tmp
+        integer(4),dimension (:),intent(in) :: iat_tmp,jneigh_tmp,ifeat_tmp
+
+        do jj=1,num_tmp
+            dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),1)=dfeat_tmp(1,jj)
+            dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),2)=dfeat_tmp(2,jj)
+            dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),3)=dfeat_tmp(3,jj)
+        enddo
+
+    end subroutine conv_dfeat
 
 
-          ! write(*,*) '000'
-          do jj=1,num_tmp
-          dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),1)=dfeat_tmp(1,jj)
-          dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),2)=dfeat_tmp(2,jj)
-          dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),3)=dfeat_tmp(3,jj)
-          enddo
+    ! Below are subroutine for single image reading and converting. 
+    ! L.Wang 2022.7 
 
-  end subroutine conv_dfeat
+    ! pytorch input format:
+    ! atom index within this image, neighbor index, feature index, spatial dimension   
+
+    subroutine allo_singleimg(atom_num,m_neigh,total_feat_num)
+        
+        ! atom_num = atom number in this image 
+
+        integer(4), intent(in) :: total_feat_num,atom_num,m_neigh
+
+        allocate(dfeat(atom_num, m_neigh,total_feat_num,3))
+
+        dfeat(:,:,:,:)=0.0
+
+    end subroutine allo_singleimg
+
+    subroutine conv_dfeat_singleimg(ipos,natom_p,num_tmp,dfeat_tmp,jneigh_tmp,ifeat_tmp,iat_tmp)
+        
+        ! this subroutine converts a single image and returns a tensor whose format matches the requirement of pytorch 
+        
+        integer(4)  :: jj
+        integer(4), intent(in) :: num_tmp,ipos,natom_p
+
+        real*8,  dimension (:,:),intent(in) :: dfeat_tmp
+        integer(4),dimension (:),intent(in) :: iat_tmp,jneigh_tmp,ifeat_tmp
+
+        
+        do jj=1,num_tmp
+            
+            ! non-continuous memory layout can significantly slow things down  
+            
+            dfeat(iat_tmp(jj) , jneigh_tmp(jj) , ifeat_tmp(jj)+ipos, 1) = dfeat_tmp(1,jj)
+            dfeat(iat_tmp(jj) , jneigh_tmp(jj) , ifeat_tmp(jj)+ipos, 2) = dfeat_tmp(2,jj)
+            dfeat(iat_tmp(jj) , jneigh_tmp(jj) , ifeat_tmp(jj)+ipos, 3) = dfeat_tmp(3,jj)
+
+            !dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),1)=dfeat_tmp(1,jj)
+            !dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),2)=dfeat_tmp(2,jj)
+            !dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),3)=dfeat_tmp(3,jj)
+        enddo
+
+    end subroutine conv_dfeat_singleimg
+
+
+
 
     ! subroutine scale(list_neigh,num_neigh,iatom,feat_scale,itype_atom)
     !     integer(4)  :: nfeat0m,natom,m_neigh,ntype,iitype,itype,i,j,jj
