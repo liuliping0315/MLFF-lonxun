@@ -11,6 +11,7 @@ import torch.autograd as autograd
 import matplotlib.pyplot as plt
 import torch.nn as nn
 
+
 #print(os.path.abspath(sys.path[0]))
 import torch.nn.functional as F
 from torch.nn.modules import loss
@@ -36,10 +37,14 @@ sys.path.append(codepath+'/..')
 import use_para as pm
 import parse_input
 parse_input.parse_input()
-#
+
 from data_loader_2type import MovementDataset, get_torch_data
 from scalers import DataScalers
 from utils import get_weight_grad
+
+# module to use the sparse dfeat
+from dfeat_sparse import dfeat_raw 
+
 from torch.utils.tensorboard import SummaryWriter
 # from tensorboardX import SummaryWriter
 import time
@@ -110,9 +115,6 @@ opt_nselect = 24
 opt_groupsize= 6
 opt_blocksize = 5120
 opt_fprefactor = 2
-
-print ("network size used:")
-print (pm.nNodes)
 
 opts,args = getopt.getopt(sys.argv[1:],
     '-h-c-m-f-R-n:-a:-z:-v:-w:-u:-e:-l:-g:-t:-b:-d:-r:-s:-o:-i:-j:',
@@ -363,12 +365,20 @@ summary("")
 summary(' '.join(sys.argv))
 summary("")
 
+global_prefac_Etot = pm.kalman_prefac_Etot
+global_prefac_Ei = pm.kalman_prefac_Ei
+global_prefac_F  = pm.kalman_prefac_Force
+decay_rate = 0.975
 
-# set default training dtype
-#
-# 1) dtype of model parameters during training
-# 2) feature data will be casted to this dtype before using
-#
+if pm.kfnn_trainEtot:
+    print ("Etot prefactor:", global_prefac_Etot)
+
+if pm.kfnn_trainEi:
+    print ("Ei prefactor:", global_prefac_Ei)
+
+if pm.kfnn_trainForce:
+    print ("Force prefactor", global_prefac_F)
+
 if (opt_dtype == 'float64'):
     info("Training: set default dtype to float64")
     torch.set_default_dtype(torch.float64)
@@ -482,63 +492,24 @@ def train(sample_batches, model, optimizer, criterion, last_epoch, real_lr):
     neighbor = Variable(sample_batches['input_nblist'].int().to(device))  # [40,108,100]
     ind_img = Variable(sample_batches['ind_image'].int().to(device))
     natoms_img = Variable(sample_batches['natoms_img'].int().to(device))
-    # dumping what you want here
-    #
-    """
-    dump("defat.shape= %s" %(dfeat.shape,))
-    dump("neighbor.shape = %s" %(neighbor.shape,))
-    dump("dump dfeat ------------------->")
-    dump(dfeat)
-    dump("dump neighbor ------------------->")
-    dump(neighbor)
-    """
-    # model = model.cuda()
-    # model = torch.nn.parallel.DistributedDataParallel(model)
-    # model.train()
-    
-    # parm={}
-    # np.set_printoptions(precision=16)
-    # for name,parameters in model.named_parameters():
-    #     print(name,':',parameters.size())
-    #     parm[name]=parameters.cpu().detach().numpy()
-    #     # print(parm[name])
-    #     # print(name, parameter.mean().item(), parameter.std().item())
-    # import ipdb;ipdb.set_trace()
+
+
     if opt_dp:
-        # Etot_predict, Ei_predict, Force_predict = model(dR, dfeat, dR_neigh_list, natoms_img, egroup_weight, divider)  # online cacl Ri and Ri_d 
         Etot_predict, Ei_predict, Force_predict = model(Ri, Ri_d, dR_neigh_list, natoms_img, egroup_weight, divider)
     else:
-        Etot_predict, Ei_predict, Force_predict = model(input_data, dfeat, neighbor, natoms_img, egroup_weight, divider)
+        Etot_predict, Ei_predict, Force_predict, Egroup_predict = model(input_data, dfeat, neighbor, natoms_img, egroup_weight, divider)
     
     optimizer.zero_grad()
+
     # Egroup_predict = model.get_egroup(egroup_weight, divider)   #[40,108,1]
 
     # Etot_deviation = Etot_predict - Etot_label     # [40,1]
-
-    """
-    dump("etot predict =============================================>")
-    dump(Etot_predict)
-    dump("etot label ===============================================>")
-    dump(Etot_label)
-    dump("force predict ============================================>")
-    dump(Force_predict)
-    dump("force label ==============================================>")
-    dump(Force_label)
-    if (last_epoch):
-        summary("etot predict =============================================>")
-        summary(Etot_predict)
-        summary("etot label ===============================================>")
-        summary(Etot_label)
-        summary("force predict ============================================>")
-        summary(Force_predict)
-        summary("force label ==============================================>")
-        summary(Force_label)
-    """
 
     loss_Etot = torch.zeros([1,1],device = device)
     loss_Ei = torch.zeros([1,1],device = device)
     loss_F = torch.zeros([1,1],device = device)
     loss_Egroup = 0
+
     # update loss with repsect to the data used
     if pm.kfnn_trainEi:
         loss_Ei = criterion(Ei_predict, Ei_label)
@@ -551,10 +522,10 @@ def train(sample_batches, model, optimizer, criterion, last_epoch, real_lr):
     loss_F = criterion(Force_predict, Force_label)
     loss_Etot = criterion(Etot_predict, Etot_label)
     loss_Ei = criterion(Ei_predict, Ei_label)
-    # loss_Egroup = criterion(Egroup_predict, Egroup_label)
-    #loss_Ei = 0
     
-    """
+    #loss_Egroup = criterion(Egroup_predict, Egroup_label)
+    #loss_Ei = 0
+    """ 
     start_lr = opt_lr
     w_f = 1 if pm.kfnn_trainForce == True else 0
     w_e = 1 if pm.kfnn_trainEtot == True else 0
@@ -617,7 +588,6 @@ def train_kalman(sample_batches, model, kalman, criterion, last_epoch, real_lr):
         error("train(): unsupported opt_dtype %s" %opt_dtype)
         raise RuntimeError("train(): unsupported opt_dtype %s" %opt_dtype)
 
-
     atom_number = Ei_label.shape[1]
     Etot_label = torch.sum(Ei_label, dim=1)
     neighbor = Variable(sample_batches['input_nblist'].int().to(device))  # [40,108,100]
@@ -629,54 +599,70 @@ def train_kalman(sample_batches, model, kalman, criterion, last_epoch, real_lr):
         kalman_inputs = [Ri, Ri_d, dR_neigh_list, natoms_img, egroup_weight, divider]
     else:
         kalman_inputs = [input_data, dfeat, neighbor, natoms_img, egroup_weight, divider]
-	
-    
+
 	# choosing what data are used for W update. Defualt are Etot and Force
     if pm.kfnn_trainEtot:
-        kalman.update_energy(kalman_inputs, Etot_label)
-    if pm.kfnn_trainEi:
-        kalman.update_ei(kalman_inputs,Ei_label)
-    if pm.kfnn_trainForce:
-        kalman.update_force(kalman_inputs, Force_label)
+        kalman.update_energy(kalman_inputs, Etot_label, update_prefactor = global_prefac_Etot)
 
+    if pm.kfnn_trainEi:
+        kalman.update_ei(kalman_inputs,Ei_label, update_prefactor = global_prefac_Ei)
+
+    if pm.kfnn_trainForce:
+        kalman.update_force(kalman_inputs, Force_label, update_prefactor = global_prefac_F)
+
+    if pm.kfnn_trainEgroup:
+        kalman.update_egroup(kalman_inputs, Egroup_label)
+
+
+    #kalman.update_ei_and_force(kalman_inputs,Ei_label,Force_label,update_prefactor = 0.1)
+
+    
     if opt_dp:
-        # Etot_predict, Ei_predict, Force_predict = model(dR, dfeat, dR_neigh_list, natoms_img, egroup_weight, divider)
+
         Etot_predict, Ei_predict, Force_predict = model(Ri, Ri_d, dR_neigh_list, natoms_img, egroup_weight, divider)
     else:
         Etot_predict, Ei_predict, Force_predict = model(input_data, dfeat, neighbor, natoms_img, egroup_weight, divider)
+
+    Egroup_predict = torch.zeros_like(Ei_predict)
+
+    if pm.kfnn_trainEgroup:
+        Egroup_predict = model.get_egroup(Ei_predict,egroup_weight,divider) 
 
     # dtype same as torch.default
     loss_Etot = torch.zeros([1,1],device = device)
     loss_Ei = torch.zeros([1,1], device = device)
     loss_F = torch.zeros([1,1],device = device)
-    
+    loss_egroup = torch.zeros([1,1],device = device)
+
     """
-        update loss with repsect to the data used.
+        update loss with repsect to the data used.  
         At least 2 flags should be true. 
     """
+
     if pm.kfnn_trainEi:
         loss_Ei = criterion(Ei_predict, Ei_label)
+    
     if pm.kfnn_trainEtot:
         loss_Etot = criterion(Etot_predict, Etot_label)
+
     if pm.kfnn_trainForce:
         loss_F = criterion(Force_predict, Force_label)
 
-    #loss_F = criterion(Force_predict, Force_label)
-    #loss_Etot = 0.0 
-    #loss_Ei = criterion(Ei_predict, Ei_label)
-    #loss_Ei = 0.0
-    loss_Egroup = 0.0
+    if pm.kfnn_trainEgroup:
+        loss_egroup = criterion(Egroup_label,Egroup_predict)
 
-    loss = loss_F + loss_Etot + loss_Ei 
-
+    loss = loss_F + loss_Etot + loss_Ei + loss_egroup 
+    
+    """
     if pm.kfnn_trainForce and pm.kfnn_trainEi:
         info("RMSE_Ei = %.12f, RMSE_Force = %.12f" %(loss_Ei ** 0.5, loss_F ** 0.5))
-
     elif pm.kfnn_trainEtot and pm.kfnn_trainForce:  
         info("RMSE_Etot = %.12f, RMSE_Force = %.12f" %(loss_Etot ** 0.5, loss_F ** 0.5))
-    else:
-        info("RMSE_Etot = %.12f, RMSE_Ei = %.12f, RMSE_Force = %.16f" %(loss_Etot ** 0.5, loss_Ei ** 0.5, loss_F ** 0.5))
-    return loss, loss_Etot, loss_Ei, loss_F
+    """
+    
+    info("RMSE_Etot = %.12f, RMSE_Ei = %.12f, RMSE_Force = %.12f, RMSE_Egroup = %.12f" %(loss_Etot ** 0.5, loss_Ei ** 0.5, loss_F ** 0.5, loss_Egroup**0.5))
+    
+    return loss, loss_Etot, loss_Ei, loss_F, loss_egroup
     
 def valid(sample_batches, model, criterion):
     if (opt_dtype == 'float64'):
@@ -722,12 +708,17 @@ def valid(sample_batches, model, criterion):
 
     # model.train()
     model.eval()
+
     if opt_dp:
-        # Etot_predict, Ei_predict, Force_predict = model(dR, dfeat, dR_neigh_list, natoms_img, egroup_weight, divider)
         Etot_predict, Ei_predict, Force_predict = model(Ri, Ri_d, dR_neigh_list, natoms_img, egroup_weight, divider)
     else:
         Etot_predict, Ei_predict, Force_predict = model(input_data, dfeat, neighbor, natoms_img, egroup_weight, divider)
     
+    Egroup_predict = torch.zeros_like(Ei_predict)
+
+    if pm.kfnn_trainEgroup:
+        Egroup_predict = model.get_egroup(Ei_predict,egroup_weight,divider)
+
     # Egroup_predict = model.get_egroup(Ei_predict, egroup_weight, divider) 
 
     # the logic is the same as training.
@@ -737,21 +728,28 @@ def valid(sample_batches, model, criterion):
     loss_Ei = criterion(Ei_predict, Ei_label)
     """
 
-    loss_Etot = torch.zeros([1,1])
-    loss_Ei = torch.zeros([1,1])
-    loss_F = torch.zeros([1,1])
+    loss_Etot = torch.zeros([1,1],device=device)
+    loss_Ei = torch.zeros([1,1],device=device)
+    loss_F = torch.zeros([1,1],device = device)
+    loss_egroup = torch.zeros([1,1],device = device)
 
     # update loss with repsect to the data used
     if pm.kfnn_trainEi:
         loss_Ei = criterion(Ei_predict, Ei_label)
+    
     if pm.kfnn_trainEtot:
         loss_Etot = criterion(Etot_predict, Etot_label)
+
     if pm.kfnn_trainForce:
         loss_F = criterion(Force_predict, Force_label)
 
-    error = float(loss_F.item()) + float(loss_Etot.item()) + float(loss_Ei.item())
+    if pm.kfnn_trainEgroup:
+        loss_egroup = criterion(Egroup_label,Egroup_predict)
 
-    return error, loss_Etot, loss_Ei, loss_F
+
+    error = float(loss_F.item()) + float(loss_Etot.item()) + float(loss_Ei.item()) + float(loss_egroup.item())
+
+    return error, loss_Etot, loss_Ei, loss_F, loss_egroup
 
 def sec_to_hms(seconds):
     m, s = divmod(seconds, 60)
@@ -806,46 +804,140 @@ info("Scheduler: opt_LR_min_lr = %s" %opt_LR_min_lr)
 info("Scheduler: opt_LR_T_max = %s" %opt_LR_T_max)
 info("scheduler: opt_autograd = %s" %opt_autograd)
 
+#======================== loading data =======================================
+
 train_data_path = pm.train_data_path
 torch_train_data = get_torch_data(train_data_path)
-
 
 valid_data_path=pm.test_data_path
 torch_valid_data = get_torch_data(valid_data_path)
 
-
 # ===================for scaler feature and dfeature==========================
-'''
-WARNING!!! Now it is a demo code for scale system with only one element!
-for multi element system, we should scaler for each element, just as for every element.
-'''
+
+"""
+    Scaling for more than 1 type of elements, each of which owns a single scaler
+    All scalers are saved in the directory presrcibed by opt_session_dir   
+"""
+
+def scaleMultiElement():
+
+    """
+        scaling for multiple element
+    """
+    scaler = []  
+    itype_index =[] # index for each type of element
+
+    if pm.is_scale:
+        if pm.use_storage_scaler:
+            for i in range(pm.ntypes):
+                scaler.append(load('scaler_{}.pkl'.format(pm.atomType[i])))
+                itype_index.append(np.where(torch_train_data.itype == pm.atomType[i])[0])
+                torch_train_data.feat[itype_index[i]]=scaler[i].transform(torch_train_data.feat[itype_index[i]])
+        else:
+
+            """
+                is this correct? 
+            """
+            for i in range(pm.ntypes):
+                
+                #below can be wrong. Use .copy() 
+                scaler.append(MinMaxScaler())
+                
+                itype_index.append(np.where(torch_train_data.itype == pm.atomType[i])[0])
+                torch_train_data.feat[itype_index[i]]=scaler[i].fit_transform(torch_train_data.feat[itype_index[i]])
+
+        for i in range(pm.ntypes):
+            dfeat_tmp = torch_train_data.dfeat[itype_index[i]]
+            dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+            dfeat_tmp = dfeat_tmp * scaler[i].scale_
+            dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+            torch_train_data.dfeat[itype_index[i]] = dfeat_tmp
+
+        if pm.storage_scaler:
+            for i in range(pm.ntypes):
+                output_name = opt_session_dir+'scaler_{}.pkl'.format(pm.atomType[i])
+                #dump(scaler[i], output_name)
+                pickle.dump(scaler[i],open(output_name,"wb"))
+
+        itype_index = []
+
+        for i in range(pm.ntypes):
+            itype_index.append(np.where(torch_valid_data.itype == pm.atomType[i])[0])
+            
+            torch_valid_data.feat[itype_index[i]] = scaler[i].transform(torch_valid_data.feat[itype_index[i]])
+
+            dfeat_tmp = torch_valid_data.dfeat[itype_index[i]]
+            dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+            dfeat_tmp = dfeat_tmp * scaler[i].scale_
+            dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+            torch_valid_data.dfeat[itype_index[i]] = dfeat_tmp
+    """
+    for item in scaler:
+        print (item.scale_)
+    """
+# below only works for a single element
+
+"""        
+    For now, fortran inference code only supports 1 type of element. 
+"""
+    
+"""
+scaleMultiElement() 
+"""
+
+scaler = None
+
 if pm.is_scale:
+    # use the old scaler file 
     if pm.use_storage_scaler:
-        scaler = load('./scaler.pkl')
+        print("loading scaler from file")
+        scaler_path = opt_session_dir + 'scaler.pkl'
+        scaler = load(scaler_path) 
+
+        print("transforming feat with loaded scaler")
         torch_train_data.feat=scaler.transform(torch_train_data.feat)
     else:
+        # generate new 
+        print("using new scaler")
         scaler=MinMaxScaler()
         torch_train_data.feat = scaler.fit_transform(torch_train_data.feat)
-    dfeat_tmp = torch_train_data.dfeat
-    dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
-    dfeat_tmp = dfeat_tmp * scaler.scale_
-    dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
-    torch_train_data.dfeat = dfeat_tmp
+        torch_valid_data.feat = scaler.transform(torch_valid_data.feat)
 
-    if pm.storage_scaler:
-        #pickle.dump(scaler, open("./scaler.pkl",'wb'))
-        pickle.dump(scaler, open(opt_session_dir+"scaler.pkl",'wb'))
-        print ("scaler.pkl saved to:",opt_session_dir) 
-	
-    torch_valid_data.feat = scaler.transform(torch_valid_data.feat)
-    dfeat_tmp = torch_valid_data.dfeat
-    dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
-    dfeat_tmp = dfeat_tmp * scaler.scale_
-    dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
-    torch_valid_data.dfeat = dfeat_tmp
+        if pm.storage_scaler:
+            #pickle.dump(scaler, open("./scaler.pkl",'wb'))
+            pickle.dump(scaler, open(opt_session_dir+"scaler.pkl",'wb'))
+            print ("scaler.pkl saved to:",opt_session_dir)
+    
+    #atom index within this image, neighbor index, feature index, spatial dimension   
 
+    if pm.is_dfeat_sparse == False: 
+        
+        # no direct scaling if sparse dfeat is used  
+        dfeat_tmp = torch_train_data.dfeat
+        dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+        dfeat_tmp = dfeat_tmp * scaler.scale_
+        dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+        torch_train_data.dfeat = dfeat_tmp
 
-loader_train = Data.DataLoader(torch_train_data, batch_size=batch_size, shuffle=True)
+        # save scaler.pkl in the prescribed directory 
+
+        dfeat_tmp = torch_valid_data.dfeat
+        dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+        dfeat_tmp = dfeat_tmp * scaler.scale_ 
+        dfeat_tmp = dfeat_tmp.transpose(0, 1, 3, 2)
+        torch_valid_data.dfeat = dfeat_tmp
+
+"""
+    Below, only training set itself is shuffled. Need to shuffle the whole data set 
+    to avoid dependence between training and validation sets. 
+"""
+
+"""
+    dense dfeat
+"""
+
+loader_train = Data.DataLoader(torch_train_data, batch_size=batch_size, shuffle=False)
+
 if opt_dp:
     davg, dstd, ener_shift = torch_train_data.get_stat(image_num=10)
     stat = [davg, dstd, ener_shift]
@@ -854,11 +946,43 @@ if opt_dp:
     np.save("./ener_shift", ener_shift)
 
 loader_valid = Data.DataLoader(torch_valid_data, batch_size=batch_size, shuffle=False)
-# if opt_dp:
-#     davg = np.load("./davg.npy")
-#     dstd = np.load("./dstd.npy")
-#     ener_shift = np.load("./ener_shift.npy")
-#     stat = [davg, dstd, ener_shift]
+
+info("feat arrays loaded")
+
+"""
+    loading sparse dfeat for training and testing     
+"""
+
+dfeat_sparse = dfeat_raw( input_dfeat_record_path_train = pm.f_train_dfeat, 
+                          input_feat_path_train = pm.f_train_feat,
+                          input_natoms_path_train = pm.f_train_natoms,
+
+                          input_dfeat_record_path_valid = pm.f_test_dfeat, 
+                          input_feat_path_valid = pm.f_test_feat,
+                          input_natoms_path_valid = pm.f_test_natoms,
+
+                          scaler = scaler)
+
+dfeat_sparse.load()  
+
+info("dfeat arrays loaded")
+
+"""
+dfeat_train = dfeat_raw(input_dfeat_record_path = pm.f_train_dfeat, 
+                        input_feat_path = pm.f_train_feat,
+                        input_natoms_path = pm.f_train_natoms,
+                        scaler = scaler)
+
+dfeat_train.load()
+
+dfeat_valid = dfeat_raw(input_dfeat_record_path = pm.f_test_dfeat, 
+                        input_feat_path = pm.f_test_feat,
+                        input_natoms_path = pm.f_test_natoms,
+                        scaler = scaler)
+
+dfeat_valid.load() 
+"""
+
 
 # if torch.cuda.device_count() > 1:
     # model = nn.DataParallel(model)
@@ -866,36 +990,32 @@ loader_valid = Data.DataLoader(torch_valid_data, batch_size=batch_size, shuffle=
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 # torch.distributed.init_process_group(backend='nccl', init_method='tcp://localhost:23457', rank=0, world_size=1)
 
-
 # ========================== part2:配置选择 ==========================
 patience = 100000
-data_scalers = DataScalers(f_ds=pm.f_data_scaler, f_feat=pm.f_train_feat, load=True)
+
+#data_scalers = DataScalers(f_ds=pm.f_data_scaler, f_feat=pm.f_train_feat, load=True)
+
+"""
+    choosing model
+"""
 
 if opt_dp:
     model = DP(opt_net_cfg, opt_act, device, stat, opt_magic)
 else:
     model = MLFFNet(device)
-    # model = MLFF(opt_net_cfg, opt_act, device, opt_magic, opt_autograd)
 
-    # this is a temp fix for a quick test
-    if (opt_init_b == True):
-        for name, p in model.named_parameters():
-            if ('linear_3.bias' in name):
-                dump(p)
-                p.data.fill_(166.0)
-                dump(p)
-    # model = MLFFNet(data_scalers)
 model.to(device)
 
-# if opt_follow_mode==True:
-#     checkpoint = torch.load(opt_model_file,map_location=device)
-#     model.load_state_dict(checkpoint['model'],strict=False)
-
 start_epoch = 1
+
+"""
+    load model parameters
+"""
+
 if (opt_recover_mode == True):
     if (opt_session_name == ''):
         raise RuntimeError("you must run follow-mode from an existing session")
-    opt_latest_file = opt_model_dir+'latest.pt'
+    opt_latest_file = opt_model_dir+'better.pt'
     checkpoint = torch.load(opt_latest_file,map_location=device)
     model.load_state_dict(checkpoint['model'])
     start_epoch = checkpoint['epoch'] + 1
@@ -904,6 +1024,7 @@ if (opt_recover_mode == True):
 #    model = nn.DataParallel(model)
 
 model_parameters = model.parameters()
+
 if (opt_optimizer == 'SGD'):
     optimizer = optim.SGD(model_parameters, lr=LR_base, momentum=momentum, weight_decay=REGULAR_wd)
 elif (opt_optimizer == 'ASGD'):
@@ -927,10 +1048,6 @@ elif (opt_optimizer == 'LBFGS'):
 else:
     error("unsupported optimizer: %s" %opt_optimizer)
     raise RuntimeError("unsupported optimizer: %s" %opt_optimizer)
-# if (opt_recover_mode == True):
-    # opt_latest_file = opt_model_dir+'latest.pt'
-    # checkpoint = torch.load(opt_latest_file,map_location=device)
-    # optimizer.load_state_dict(checkpoint['optimizer'])
 
 
 # user specific LambdaLR lambda function
@@ -949,11 +1066,6 @@ else:
     error("unsupported scheduler: %s" %opt_schedler)
     raise RuntimeError("unsupported scheduler: %s" %opt_scheduler)
 
-# optimizer = optim.AdamW([
-#             {'params': (p for name, p in model.named_parameters() if 'fitting_net.bias.bias3' not in name)},
-#             {'params': (p for name, p in model.named_parameters() if 'fitting_net.bias.bias3' in name), 'lr': LR_base/108}
-#         ], lr=LR_base)
-
 # ==========================part3:模型training==========================
 
 if pm.use_GKalman == True:
@@ -968,99 +1080,158 @@ iter = 1
 epoch_print = 1 
 iter_print = 1 
 
+def test():
+    """
+        used to check if the loaded model is correct. 
+    """
+    nr_total_sample = 0
+    valid_loss = 0.
+    valid_loss_Etot = 0.
+    valid_loss_Ei = 0.
+    valid_loss_F = 0.
+    valid_loss_Egroup = 0.0
+
+    for i_batch, sample_batches in enumerate(loader_valid):
+        natoms_sum = sample_batches['natoms_img'][0, 0].item()
+        nr_batch_sample = sample_batches['input_feat'].shape[0]
+        
+        valid_error_iter, batch_loss_Etot, batch_loss_Ei, batch_loss_F, batch_loss_Egroup = valid(sample_batches, model, nn.MSELoss())
+
+        # n_iter = (epoch - 1) * len(loader_valid) + i_batch + 1
+        valid_loss += valid_error_iter * nr_batch_sample
+
+        valid_loss_Etot += batch_loss_Etot * nr_batch_sample
+        valid_loss_Ei += batch_loss_Ei * nr_batch_sample
+        valid_loss_F += batch_loss_F * nr_batch_sample
+        valid_loss_Egroup += batch_loss_Egroup * nr_batch_sample
+
+        nr_total_sample += nr_batch_sample
+        
+    valid_loss /= nr_total_sample
+    valid_loss_Etot /= nr_total_sample
+    valid_loss_Ei /= nr_total_sample
+    valid_loss_F /= nr_total_sample
+    valid_loss_Egroup /= nr_total_sample
+
+    valid_RMSE_Etot = valid_loss_Etot ** 0.5
+    valid_RMSE_Ei = valid_loss_Ei ** 0.5
+    valid_RMSE_F = valid_loss_F ** 0.5
+    valid_RMSE_Egroup = valid_loss_Egroup ** 0.5
+
+    print("valid_RMSE_Etot",valid_RMSE_Etot)
+    print("valid_RMSE_Ei",valid_RMSE_Ei)
+    print("valid_RMSE_F",valid_RMSE_F)
+    print("valid_RMSE_Egroup",valid_RMSE_Egroup)
+
+    return 
+
+#=================================== training ==========================================
+
 for epoch in range(start_epoch, n_epoch + 1):
+    timeEpochStart = time.time()
     if (epoch == n_epoch):
         last_epoch = True
     else:
         last_epoch = False
     lr = optimizer.param_groups[0]['lr']
+
     info("<-------------------------  epoch %d (lr=%.16f) ------------------------->" %(epoch, lr))
+    
     nr_total_sample = 0
+
     loss = 0.
     loss_Etot = 0.
     loss_Ei = 0.
     loss_F = 0.
-    # lr_bn32 = math.sqrt(32) 
+    loss_Egroup = 0.0
+    
 
     for i_batch, sample_batches in enumerate(loader_train):
         nr_batch_sample = sample_batches['input_feat'].shape[0]
-        #debug("nr_batch_sample = %s" %nr_batch_sample)
+
         global_step = (epoch - 1) * len(loader_train) + i_batch * nr_batch_sample
         real_lr = adjust_lr(global_step)
+
         for param_group in optimizer.param_groups:
-            # param_group['lr'] = real_lr * pm.batch_size
             param_group['lr'] = real_lr * (pm.batch_size ** 0.5)
         
         natoms_sum = sample_batches['natoms_img'][0, 0].item()
         
+
+        # call transform 
+        if pm.is_dfeat_sparse == True:
+            #sample_batches['input_dfeat']  = dfeat_train.transform(i_batch)
+            sample_batches['input_dfeat']  = dfeat_sparse.transform(i_batch,"train")
+
         if pm.use_GKalman == True:
             real_lr = 0.001
-            batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F = \
+            batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F, batch_loss_Egroup = \
                 train_kalman(sample_batches, model, Gkalman, nn.MSELoss(), last_epoch, real_lr)
         elif pm.use_LKalman == True:
             real_lr = 0.001
-            batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F = \
+            batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F, batch_loss_Egroup = \
                 train_kalman(sample_batches, model, Lkalman, nn.MSELoss(), last_epoch, real_lr)
         elif pm.use_SKalman == True:
             real_lr = 0.001
-            batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F = \
+            batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F, batch_loss_Egroup = \
                 train_kalman(sample_batches, model, Skalman, nn.MSELoss(), last_epoch, real_lr)
         else:
             # pass
             batch_loss, batch_loss_Etot, batch_loss_Ei, batch_loss_F = \
                 train(sample_batches, model, optimizer, nn.MSELoss(), last_epoch, real_lr)
-            
-        # print("batch loss:" + str(batch_loss.item()))
-        # # print("batch mse ei:" + str(batch_loss_Ei.item()))
-        # print("batch mse etot:" + str(batch_loss_Etot.item()))
-        # print("batch mse F:" + str(batch_loss_F.item()))
-        # print("=============================")
-
+        
         iter = iter + 1
         f_err_log = opt_session_dir+'iter_loss.dat'
+        
         if iter == 1:
             fid_err_log = open(f_err_log, 'w')
-            fid_err_log.write('iter\t loss\t RMSE_Etot\t RMSE_Ei\t RMSE_F\t lr\n')
+            fid_err_log.write('iter\t loss\t RMSE_Etot\t RMSE_Ei\t RMSE_F\t RMSE_Eg\n')
         if iter % iter_print == 0:
             fid_err_log = open(f_err_log, 'a')
-            fid_err_log.write('%d %e %e %e %e %e \n'%(iter, batch_loss, math.sqrt(batch_loss_Etot)/natoms_sum, math.sqrt(batch_loss_Ei), math.sqrt(batch_loss_F), real_lr))
+            fid_err_log.write('%d %e %e %e %e %e \n'%(iter, batch_loss, math.sqrt(batch_loss_Etot)/natoms_sum, math.sqrt(batch_loss_Ei), math.sqrt(batch_loss_F), math.sqrt(batch_loss_Egroup)))
         else:
             pass
-
+        
         loss += batch_loss.item() * nr_batch_sample
         loss_Etot += batch_loss_Etot.item() * nr_batch_sample
         loss_Ei += batch_loss_Ei.item() * nr_batch_sample
         loss_F += batch_loss_F.item() * nr_batch_sample
-        nr_total_sample += nr_batch_sample
 
-        # 权重的梯度
-        # for name, parameter in model.named_parameters():
-        #     print(name)
-        #     print(parameter.grad.data)
-        #     # break
-        # print(model.state_dict().keys())
+        loss_Egroup += batch_loss_Egroup.item() * nr_batch_sample 
+
+        nr_total_sample += nr_batch_sample
         
+    #update pre-factor 
+    #global_prefac_Ei *= decay_rate
+    #global_prefac_F  *= decay_rate 
+        
+    #print ("Ei prefac:", global_prefac_Ei, ", Force prefac:", global_prefac_F)
+
     # epoch loss update
     loss /= nr_total_sample
     loss_Etot /= nr_total_sample
     loss_Ei /= nr_total_sample
     loss_F /= nr_total_sample
+    loss_Egroup /= nr_total_sample
+
+
     RMSE_Etot = loss_Etot ** 0.5
     RMSE_Ei = loss_Ei ** 0.5
     RMSE_F = loss_F ** 0.5
-    
-    info("epoch_loss = %.16f (RMSE_Etot = %.16f, RMSE_Ei = %.16f, RMSE_F = %.16f)" \
-        %(loss, RMSE_Etot, RMSE_Ei, RMSE_F))
+    RMSE_Egroup = loss_Egroup ** 0.5 
+
+    info("epoch_loss = %.10f (RMSE_Etot = %.12f, RMSE_Ei = %.12f, RMSE_F = %.12f, RMSE_Eg = %.12f)" \
+        %(loss, RMSE_Etot, RMSE_Ei, RMSE_F, RMSE_Egroup))
 
     epoch_err_log = opt_session_dir+'epoch_loss.dat'
+
     if epoch == 1:
         f_epoch_err_log = open(epoch_err_log, 'w')
-        f_epoch_err_log.write('epoch\t loss\t RMSE_Etot\t RMSE_Ei\t RMSE_F\t lr\n')
-    if epoch % epoch_print == 0:
+        f_epoch_err_log.write('epoch\t loss\t RMSE_Etot\t RMSE_Ei\t RMSE_F\t RMSE_Eg\n')
+
+    if epoch % epoch_print  == 0:
         f_epoch_err_log = open(epoch_err_log, 'a')
-        f_epoch_err_log.write('%d %e %e %e %e %e \n'%(epoch, loss, RMSE_Etot, RMSE_Ei, RMSE_F, real_lr))
-    else:
-        pass    
+        f_epoch_err_log.write('%d %e %e %e %e %e \n'%(epoch, loss, RMSE_Etot, RMSE_Ei, RMSE_F, RMSE_Egroup))
 
     if (opt_scheduler == 'OC'):
         pass
@@ -1078,7 +1249,7 @@ for epoch in range(start_epoch, n_epoch + 1):
     if opt_save_model == True: 
         state = {'model': model.state_dict(),'optimizer':optimizer.state_dict(),'epoch':epoch, 'loss': loss}
         file_name = opt_model_dir + 'latest.pt'
-        if epoch % 100 == 0:
+        if epoch % 10 == 0:
             file_name = opt_model_dir + str(epoch) + '.pt'
         torch.save(state, file_name)
 
@@ -1097,15 +1268,27 @@ for epoch in range(start_epoch, n_epoch + 1):
         valid_loss_Etot = 0.
         valid_loss_Ei = 0.
         valid_loss_F = 0.
+        valid_loss_Egroup = 0.0
+
         for i_batch, sample_batches in enumerate(loader_valid):
             natoms_sum = sample_batches['natoms_img'][0, 0].item()
             nr_batch_sample = sample_batches['input_feat'].shape[0]
-            valid_error_iter, batch_loss_Etot, batch_loss_Ei, batch_loss_F = valid(sample_batches, model, nn.MSELoss())
+            
+            # call transform() when dfeat_sparse = true 
+            if pm.is_dfeat_sparse == True:
+                #sample_batches['input_dfeat']  = dfeat_valid.transform(i_batch)
+                sample_batches['input_dfeat']  = dfeat_sparse.transform(i_batch,"valid")
+
+            valid_error_iter, batch_loss_Etot, batch_loss_Ei, batch_loss_F, batch_loss_Egroup = valid(sample_batches, model, nn.MSELoss())
+
             # n_iter = (epoch - 1) * len(loader_valid) + i_batch + 1
             valid_loss += valid_error_iter * nr_batch_sample
-            valid_loss_Etot += batch_loss_Etot.item() * nr_batch_sample
-            valid_loss_Ei += batch_loss_Ei.item() * nr_batch_sample
-            valid_loss_F += batch_loss_F.item() * nr_batch_sample
+
+            valid_loss_Etot += batch_loss_Etot * nr_batch_sample
+            valid_loss_Ei += batch_loss_Ei * nr_batch_sample
+            valid_loss_F += batch_loss_F * nr_batch_sample
+            valid_loss_Egroup += batch_loss_Egroup * nr_batch_sample
+
             nr_total_sample += nr_batch_sample
 
             f_err_log = opt_session_dir+'iter_loss_valid.dat'
@@ -1123,19 +1306,23 @@ for epoch in range(start_epoch, n_epoch + 1):
         valid_loss_Etot /= nr_total_sample
         valid_loss_Ei /= nr_total_sample
         valid_loss_F /= nr_total_sample
+        valid_loss_Egroup /= nr_total_sample
+
         valid_RMSE_Etot = valid_loss_Etot ** 0.5
         valid_RMSE_Ei = valid_loss_Ei ** 0.5
         valid_RMSE_F = valid_loss_F ** 0.5
-        info("valid_loss = %.16f (valid_RMSE_Etot = %.16f, valid_RMSE_Ei = %.16f, valid_RMSE_F = %.16f)" \
-             %(valid_loss, valid_RMSE_Etot, valid_RMSE_Ei, valid_RMSE_F))
+        valid_RMSE_Egroup = valid_loss_Egroup ** 0.5
+        
+        info("valid_loss = %.10f (valid_RMSE_Etot = %.12f, valid_RMSE_Ei = %.12f, valid_RMSE_F = %.12f, valid_RMSE_Egroup = %.12f)" \
+             %(valid_loss, valid_RMSE_Etot, valid_RMSE_Ei, valid_RMSE_F, valid_RMSE_Egroup))
 
         f_err_log =  opt_session_dir + 'epoch_loss_valid.dat'
         if not os.path.exists(f_err_log):
             fid_err_log = open(f_err_log, 'w')
-            fid_err_log.write('epoch\t valid_RMSE_Etot\t valid_RMSE_Ei\t valid_RMSE_F\n')
+            fid_err_log.write('epoch\t valid_RMSE_Etot\t valid_RMSE_Ei\t valid_RMSE_F\t valid_RMSE_Eg \n')
         if epoch % epoch_print == 0:
             fid_err_log = open(f_err_log, 'a')
-            fid_err_log.write('%d %e %e %e \n'%(epoch, valid_RMSE_Etot, valid_RMSE_Ei, valid_RMSE_F))
+            fid_err_log.write('%d %e %e %e %e\n'%(epoch, valid_RMSE_Etot, valid_RMSE_Ei, valid_RMSE_F, valid_RMSE_Egroup))
         
         if valid_loss < min_loss:
             min_loss = valid_loss
@@ -1154,13 +1341,13 @@ for epoch in range(start_epoch, n_epoch + 1):
                 print("Early stopping")
                 break
 
-        # update tensorboard
-        if (writer is not None):
-            writer.add_scalar('valid_loss', valid_loss, epoch)
-            writer.add_scalar('valid_RMSE_Etot', valid_RMSE_Etot, epoch)
-            writer.add_scalar('valid_RMSE_F', valid_RMSE_F, epoch)
-
+    timeEpochEnd = time.time()
+    #info("time of epoch ", epoch, ":", timeEpochEnd - timeEpochStart, " s")
+    print ("time of epoch ", epoch, ":", timeEpochEnd - timeEpochStart, " s")
+    
 if (writer is not None):
     writer.close()
     if (opt_wandb is True):
         wandb_run.finish()
+
+
