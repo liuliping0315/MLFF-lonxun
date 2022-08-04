@@ -15,7 +15,6 @@ import prepare as pp
 import use_para as pm
 import parse_input
 parse_input.parse_input()
-#
 
 
 class MovementDataset(Dataset):
@@ -26,11 +25,19 @@ class MovementDataset(Dataset):
                  energy_path, force_path, ind_img_path, natoms_img_path,
                  dR_neigh_path=None, Ri_path=None, Ri_d_path=None):  # , natoms_path
 
+
+        """
+            pm.is_dfeat_sparse is True, self.dfeat will not be generated
+        """
+
         super(MovementDataset, self).__init__()
         self.device = torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu')
         self.feat = np.load(feat_path)
-        self.dfeat = np.load(dfeat_path)
+
+        if pm.is_dfeat_sparse==False:
+            self.dfeat = np.load(dfeat_path)
+        
         self.egroup = np.load(egroup_path)
         self.egroup_weight = np.load(egroup_weight_path)
         self.divider = np.load(divider_path)
@@ -48,6 +55,7 @@ class MovementDataset(Dataset):
         
         self.ntypes = pm.ntypes
         self.natoms_img = np.load(natoms_img_path)
+        
         if dR_neigh_path:
             self.use_dR_neigh = True
             tmp = np.load(dR_neigh_path)
@@ -61,7 +69,8 @@ class MovementDataset(Dataset):
 
             self.Ri_all = np.load(Ri_path) #(12, 108, 100, 4)
             self.Ri_d_all = np.load(Ri_d_path)
-    
+        
+    # for dR
     def prepare(self, Ri_path, Ri_d_path):
         image_dR = self.dR
         list_neigh = self.dR_neigh_list
@@ -104,31 +113,63 @@ class MovementDataset(Dataset):
         np.save(Ri_path, Ri)
         np.save(Ri_d_path, Ri_d)
 
+
     def __getitem__(self, index):
         # index = index + 10
         ind_image = np.zeros(2)
         ind_image[0] = self.ind_img[index]
         ind_image[1] = self.ind_img[index+1]
-        dic = {
-            'input_feat': self.feat[self.ind_img[index]:self.ind_img[index+1]],
-            'input_dfeat': self.dfeat[self.ind_img[index]:self.ind_img[index+1]],
-            'input_egroup': self.egroup[self.ind_img[index]:self.ind_img[index+1]],
-            'input_egroup_weight': self.egroup_weight[self.ind_img[index]:self.ind_img[index+1]],
-            'input_divider': self.divider[self.ind_img[index]:self.ind_img[index+1]],
-            'input_itype': self.itype[self.ind_img[index]:self.ind_img[index+1]],
-            'input_nblist': self.nblist[self.ind_img[index]:self.ind_img[index+1]],
-            'input_weight_all': self.weight_all[self.ind_img[index]:self.ind_img[index+1]],
 
-            'output_energy': self.energy[self.ind_img[index]:self.ind_img[index+1]],
-            'output_force': self.force[self.ind_img[index]:self.ind_img[index+1]],
-            'ind_image': ind_image,
-            'natoms_img': self.natoms_img[index]
-        }
+        dic= {} 
+
+        if pm.is_dfeat_sparse==False:
+
+            dic = {
+                'input_feat': self.feat[self.ind_img[index]:self.ind_img[index+1]],
+
+                'input_dfeat': self.dfeat[self.ind_img[index]:self.ind_img[index+1]],
+                
+                'input_egroup': self.egroup[self.ind_img[index]:self.ind_img[index+1]],
+                'input_egroup_weight': self.egroup_weight[self.ind_img[index]:self.ind_img[index+1]],
+                'input_divider': self.divider[self.ind_img[index]:self.ind_img[index+1]],
+                'input_itype': self.itype[self.ind_img[index]:self.ind_img[index+1]],
+                'input_nblist': self.nblist[self.ind_img[index]:self.ind_img[index+1]],
+                'input_weight_all': self.weight_all[self.ind_img[index]:self.ind_img[index+1]],
+
+                'output_energy': self.energy[self.ind_img[index]:self.ind_img[index+1]],
+                'output_force': self.force[self.ind_img[index]:self.ind_img[index+1]],
+                'ind_image': ind_image,
+                'natoms_img': self.natoms_img[index]
+            }
+
+        else:
+            # not __getitem__ functionality for dfeat 
+            dic = {
+                'input_feat': self.feat[self.ind_img[index]:self.ind_img[index+1]],
+
+                # place holder 
+                'input_dfeat': [], 
+
+                'input_egroup': self.egroup[self.ind_img[index]:self.ind_img[index+1]],
+                'input_egroup_weight': self.egroup_weight[self.ind_img[index]:self.ind_img[index+1]],
+                'input_divider': self.divider[self.ind_img[index]:self.ind_img[index+1]],
+                'input_itype': self.itype[self.ind_img[index]:self.ind_img[index+1]],
+                'input_nblist': self.nblist[self.ind_img[index]:self.ind_img[index+1]],
+                'input_weight_all': self.weight_all[self.ind_img[index]:self.ind_img[index+1]],
+
+                'output_energy': self.energy[self.ind_img[index]:self.ind_img[index+1]],
+                'output_force': self.force[self.ind_img[index]:self.ind_img[index+1]],
+                'ind_image': ind_image,
+                'natoms_img': self.natoms_img[index]
+            }   
+
+            
         if self.use_dR_neigh:
             dic['input_dR'] = self.dR[self.ind_img[index]:self.ind_img[index+1]]
             dic['input_dR_neigh_list'] = self.dR_neigh_list[self.ind_img[index]:self.ind_img[index+1]]
             dic['input_Ri'] = self.Ri_all[index]  
             dic['input_Ri_d'] = self.Ri_d_all[index]
+        
         return dic
     
     def __len__(self):
@@ -359,7 +400,9 @@ def get_torch_data(examplespath):
         f_dR_neigh = None
         f_Ri = None
         f_Ri_d = None
+
     f_dfeat = os.path.join(examplespath+'/dfeat_scaled.npy')
+
     f_egroup = os.path.join(examplespath+'/egroup.npy')
     f_egroup_weight = os.path.join(examplespath+'/egroup_weight.npy')
     f_divider = os.path.join(examplespath+'/divider.npy')

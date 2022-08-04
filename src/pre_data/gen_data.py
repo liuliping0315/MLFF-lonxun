@@ -15,51 +15,66 @@ import numpy as np
 import pandas as pd
 codepath=os.path.abspath(sys.path[0])
 sys.path.append(codepath+'/../lib')
+
 from read_all import read_allnn
+
 import torch
 from torch.autograd import Variable
 from scalers import DataScalers
 
-#
+"""
+     
+"""
+
 # check for feature_dtype, that determins
 # the dtype (and precision) of feature data files
-#
+
 if (pm.feature_dtype == 'float64'):
     from convert_dfeat64 import convert_dfeat
 elif (pm.feature_dtype == 'float32'):
     from convert_dfeat import convert_dfeat
 else:
-    raise RuntimeError(
+    raise RuntimeError( 
     "unsupported feature_dtype: %s, check feature_dtype in your parameters.py"
     %pm.feature_dtype)
 
-
 def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
                  f_train_natoms, f_train_egroup, nn_data_path): # f_train_ep):
+
     if not os.path.exists(nn_data_path):
         os.makedirs(nn_data_path)
+    
+    #print("input feat path:",f_train_feat)
+    #print("input dfeat path:",f_train_dfeat)
+
     # natoms contain all atomnum of each image, format: totnatom, type1n, type2 n
+    
     natoms = np.loadtxt(f_train_natoms, dtype=int)
     natoms = np.atleast_2d(natoms)
+    
     nImg = natoms.shape[0]
+    
     indImg = np.zeros((nImg+1,), dtype=int)
     indImg[0] = 0
     
     for i in range(nImg):
         indImg[i+1] = indImg[i] + natoms[i, 0]
     
-    # 设置打印时显示方式：输出数组的时候完全输出
+
     np.set_printoptions(threshold=np.inf)
     # pd.set_option('display.float_format',lambda x : '%.15f' % x)
+
     pd.options.display.float_format = '${:,.15f}'.format
     itypes, feat, engy = prepare.r_feat_csv(f_train_feat)
     natoms_img = np.zeros((nImg, pm.ntypes + 1), dtype=np.int32)
+
     for i in range(nImg):
         natoms_img[i][0] = indImg[i+1] - indImg[i]
         tmp = itypes[indImg[i]:indImg[i+1]]
         mask, ind = np.unique(tmp, return_index=True)
         mask = mask[np.argsort(ind)]
         type_id = 1
+
         for type in mask:
             natoms_img[i][type_id] = np.sum(tmp == type)
             type_id += 1
@@ -68,16 +83,20 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
     # feat_scaled = scalers.pre_feat(feat, itypes)
     # engy_scaled = scalers.pre_engy(engy, itypes)
     # 不scale
+    
     feat_scaled = feat
     engy_scaled = engy
 
     egroup, divider, egroup_weight = prepare.r_egroup_csv(f_train_egroup)
+
     if os.path.exists(os.path.join(pm.dir_work, 'weight_for_cases')):
         weight_all = pd.read_csv(os.path.join(pm.dir_work, 'weight_for_cases'),
                                  header=None, encoding= 'unicode_escape').values[:, 0].astype(pm.feature_dtype).reshape(-1, 1)
     else:
         weight_all = np.ones((engy_scaled.shape[0], 1))
+
     nfeat0m = feat_scaled.shape[1]  # 每个原子特征的维度
+    
     itype_atom = np.asfortranarray(np.array(pm.atomType).transpose())  # 原子类型
     
     # feat_scale_a = np.zeros((nfeat0m, pm.ntypes))
@@ -91,7 +110,6 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
     
     init = pm.use_Ftype[0]
     
-
     dfeatdirs = {}
     energy_all = {}
     force_all = {}
@@ -99,6 +117,7 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
     list_neigh_all = {}
     iatom_all = {}
     dfeat_tmp_all = {}
+
     num_tmp_all = {}
     iat_tmp_all = {}
     jneigh_tmp_all = {}
@@ -106,35 +125,69 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
     nfeat = {}
     nfeat[0] = 0
     flag = 0
-    
+
+    """
+        In fortran code, dfeat_tmp is the compact storage of dfeats. Only nonzero values are saved. 
+    """
+
     # 读取 dfeat file
     for m in pm.use_Ftype:
+
+        """
+            get the path for dfeat
+            
+            compatible for multiple input movement file such as 
+
+            PWdata/system1/dfeat.fbin.Ftype1
+            PWdata/system2/dfeat.fbin.Ftype1
+            ... 
+            
+            dfeat.fbin.Ftype1 records: (for feature 1)
+            path to this dfeat, image index , absolute index 
+
+            In the fortran code, dfeat_tmp is the sparse array that stores the dfeat values
+        """
+
         dfeatdirs[m] = np.unique(pd.read_csv(
             f_train_dfeat+str(m), header=None, encoding= 'unicode_escape').values[:, 0])
-        for k in dfeatdirs[m]:
-            read_allnn.read_dfeat(k, itype_atom, feat_scale_a, nfeat[flag])
+
+        """
+            looping over all defeat binary files in different direcotry
+        """
+        for dfeatBinIdx in dfeatdirs[m]:
+            read_allnn.read_dfeat(dfeatBinIdx, itype_atom, feat_scale_a, nfeat[flag])
+            
             if flag == 0:
-                energy_all[k] = np.array(read_allnn.energy_all).astype(pm.feature_dtype)
-                force_all[k] = np.array(read_allnn.force_all).transpose(1, 0, 2).astype(pm.feature_dtype)
-                list_neigh_all[k] = np.array(read_allnn.list_neigh_all).transpose(1, 0, 2).astype(int)
-                iatom_all[k] = np.array(read_allnn.iatom)
+                energy_all[dfeatBinIdx] = np.array(read_allnn.energy_all).astype(pm.feature_dtype)
+                force_all[dfeatBinIdx] = np.array(read_allnn.force_all).transpose(1, 0, 2).astype(pm.feature_dtype)
+                list_neigh_all[dfeatBinIdx] = np.array(read_allnn.list_neigh_all).transpose(1, 0, 2).astype(int)
+                iatom_all[dfeatBinIdx] = np.array(read_allnn.iatom)
 
+            # dfeat here is already sparse
             nfeat[flag+1] = np.array(read_allnn.feat_all).shape[0]
-            dfeat_tmp_all[k] = np.array(read_allnn.dfeat_tmp_all).astype(pm.feature_dtype)
-            num_tmp_all[k] = np.array(read_allnn.num_tmp_all).astype(int)
-            iat_tmp_all[k] = np.array(read_allnn.iat_tmp_all).astype(int)
-            jneigh_tmp_all[k] = np.array(read_allnn.jneigh_tmp_all).astype(int)
-            ifeat_tmp_all[k] = np.array(read_allnn.ifeat_tmp_all).astype(int)
-            read_allnn.deallo()
-        flag = flag+1
-        
-    # dfeat_tmp_all_1 = []
-    # for k in dfeat_tmp_all.items():
-    #     dfeat_tmp_all_1.append(k)
-    # dfeat = np.array(dfeat_tmp_all_1)
 
-    # print("========dfeat_tmp_all========")
-    # print(dfeat_tmp_all)
+            #dfeat_sparse[k] = np.array(read_allnn.dfeat_sparse).astype(pm.feature_dtype)
+
+            #print("dfeat sparse shape:",dfeat_sparse[k].shape)
+
+            # dfeat_tmp_all contains all images 
+            dfeat_tmp_all[dfeatBinIdx] = np.array(read_allnn.dfeat_tmp_all).astype(pm.feature_dtype)
+            
+            #print("dfeat_tmp_all shape:",dfeat_tmp_all[dfeatBinIdx].shape)
+            #print("dfeat nnz:", len(np.where(dfeat_tmp_all[dfeatBinIdx]!=0)[0]) ) 
+
+            num_tmp_all[dfeatBinIdx] = np.array(read_allnn.num_tmp_all).astype(int)
+
+            #below are the auxiliary arrays for dfeat_tmp_all
+            iat_tmp_all[dfeatBinIdx] = np.array(read_allnn.iat_tmp_all).astype(int)
+            jneigh_tmp_all[dfeatBinIdx] = np.array(read_allnn.jneigh_tmp_all).astype(int)
+            ifeat_tmp_all[dfeatBinIdx] = np.array(read_allnn.ifeat_tmp_all).astype(int)
+            
+            read_allnn.deallo()
+
+            #print("dfeat from Fort:\n",type(read_allnn.dfeat_tmp_all))
+
+        flag = flag+1
 
     #pm.fitModelDir=./fread_dfeat  
     with open(os.path.join(pm.fitModelDir, "feat.info"), 'w') as f:
@@ -153,49 +206,116 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
                 f.writelines(str(nfeat[m+1])+'  ')
             f.writelines('\n')
 
+
     dfeat_names = {}
-    image_nums = {}
+    image_nums = {} 
     pos_nums = {}
-    for m in pm.use_Ftype:
-        values = pd.read_csv(f_train_dfeat+str(m), header=None, encoding= 'unicode_escape').values
-        dfeat_names[m] = values[:, 0]
-        image_nums[m] = values[:, 1].astype(int)
-        pos_nums[m] = values[:, 2].astype(int)
-        nImg = image_nums[m].shape[0]
+    
+    for featureIdx in pm.use_Ftype:
+        values = pd.read_csv(f_train_dfeat+str(featureIdx), header=None, encoding= 'unicode_escape').values
+        # dfeat_names[m] 
+        dfeat_names[featureIdx] = values[:, 0]
+        image_nums[featureIdx] = values[:, 1].astype(int)
+        pos_nums[featureIdx] = values[:, 2].astype(int)
+        
+        nImg = image_nums[featureIdx].shape[0]
 
     fors_scaled = []
     nblist = []
+
     for ll in range(len(image_nums[init])):
         fors_scaled.append(force_all[dfeat_names[init][ll]][:, :, image_nums[init][ll]-1])
         nblist.append(list_neigh_all[dfeat_names[init][ll]][:, :, image_nums[init][ll]-1])
+
     fors_scaled = np.concatenate(fors_scaled, axis=0)
     nblist = np.concatenate(nblist, axis=0)
     
-# ========================================================================
-    img_num = indImg.shape[0] - 1
-    convert_dfeat.allo(nfeat0m, indImg[-1], pm.maxNeighborNum)
-    for i in range(img_num):
-        dfeat_name={}
-        image_num={}
-        for mm in pm.use_Ftype:
-            dfeat_name[mm] = dfeat_names[mm][i]
-            image_num[mm] = image_nums[mm][i]
-        kk=0
-        for mm in pm.use_Ftype:
-            dfeat_tmp=np.asfortranarray(dfeat_tmp_all[dfeat_name[mm]][:,:,image_num[mm]-1])
-            jneigh_tmp=np.asfortranarray(jneigh_tmp_all[dfeat_name[mm]][:,image_num[mm]-1])
-            ifeat_tmp=np.asfortranarray(ifeat_tmp_all[dfeat_name[mm]][:,image_num[mm]-1])
-            iat_tmp=np.asfortranarray(iat_tmp_all[dfeat_name[mm]][:,image_num[mm]-1])
-            convert_dfeat.conv_dfeat(image_num[mm],nfeat[kk],indImg[i],num_tmp_all[dfeat_name[mm]][image_num[mm]-1],dfeat_tmp,jneigh_tmp,ifeat_tmp,iat_tmp)
-            kk=kk+1
+# ========================================================================+_+_+_+_+_+_+_+_+_+_+_+_+_+_+_+
     
-    dfeat_scaled = np.array(convert_dfeat.dfeat).transpose(1,2,0,3).astype(pm.feature_dtype)
-    # print("======dfeat_scaled=======")
-    # print(dfeat_scaled)
+    """
+        indImg : atom index for each image 
+        [0,64,128,...]
 
-    convert_dfeat.deallo()
+        nfeat: 
+        feature number 
+
+    """
+    # img_num: total image number, same for all features 
+
     
-    
+    # this label enforces the use of sparse dfeat,
+    # defualt = True
+    if pm.is_dfeat_sparse==False:
+
+        img_num = indImg.shape[0] - 1
+        
+        #print ("indImg",indImg) #number of image 
+        #print ("image num", img_num) 
+        #print ("nfeat", nfeat) # feature number of each type 
+
+        convert_dfeat.allo(nfeat0m, indImg[-1], pm.maxNeighborNum)
+
+        for i in range(img_num):
+            dfeat_name={}
+            image_num={}
+            
+
+            for featureKey in pm.use_Ftype:
+                """
+                    dfeat_name: path to the dfeat file 
+                    image_num : image index selected 
+                """
+                dfeat_name[featureKey] = dfeat_names[featureKey][i]
+                image_num[featureKey] = image_nums[featureKey][i]
+                
+            featureIdx = 0
+            
+            for mm in pm.use_Ftype:
+                # feature value array 
+
+                """
+                    index order of dfeat_tmp_all:
+                    spatial dimension, non-zero element index, image index 
+                """ 
+
+                dfeat_tmp=np.asfortranarray(dfeat_tmp_all[dfeat_name[mm]][:,:,image_num[mm]-1])
+                
+                #neighbor index array
+                jneigh_tmp=np.asfortranarray(jneigh_tmp_all[dfeat_name[mm]][:,image_num[mm]-1])
+                
+                # feature index array
+                ifeat_tmp=np.asfortranarray(ifeat_tmp_all[dfeat_name[mm]][:,image_num[mm]-1])
+                
+                # atom index array 
+                iat_tmp=np.asfortranarray(iat_tmp_all[dfeat_name[mm]][:,image_num[mm]-1])
+
+                convert_dfeat.conv_dfeat(image_num[mm],nfeat[featureIdx],indImg[i],num_tmp_all[dfeat_name[mm]][image_num[mm]-1],dfeat_tmp,jneigh_tmp,ifeat_tmp,iat_tmp)
+
+                featureIdx += 1         
+
+                """
+                    fortran convert_dfeat
+
+                    conv_dfeat(image_Num,ipos,natom_p,num_tmp,dfeat_tmp,jneigh_tmp,ifeat_tmp,iat_tmp)
+
+                    do jj=1,num_tmp
+                        dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),1)=dfeat_tmp(1,jj)
+                        dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),2)=dfeat_tmp(2,jj)
+                        dfeat(ifeat_tmp(jj)+ipos,iat_tmp(jj)+natom_p,jneigh_tmp(jj),3)=dfeat_tmp(3,jj)
+                    enddo
+                    
+                    natom_p: starting absolute atom index of this image
+                """
+
+        """ 
+            index order of dense dfeat_scaled: 
+            absolute atom index, neighbor index, feature index, spatial dimension
+        """ 
+
+        dfeat_scaled = np.array(convert_dfeat.dfeat).transpose(1,2,0,3).astype(pm.feature_dtype)
+        
+        convert_dfeat.deallo()    
+
     print("feat_scaled shape" + str(feat_scaled.shape))
     print("fors_scaled shape" + str(fors_scaled.shape))
     print("nblist shape" + str(nblist.shape))
@@ -205,7 +325,11 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
     print("weight_all shape" + str(weight_all.shape))
     print("egroup shape" + str(egroup.shape))
     print("divider shape" + str(egroup.shape))
-    print("dfeat_scaled shape" + str(dfeat_scaled.shape))
+
+    
+    if pm.is_dfeat_sparse==False:
+        print("dfeat_scaled shape" + str(dfeat_scaled.shape))
+    
     print("natoms_img shape" + str(natoms_img.shape))
     
     # neighbor 不排序
@@ -235,13 +359,14 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
         dR_neigh = res.values.reshape(indImg[-1], len(pm.atomType), pm.maxNeighborNum, 4)
         print("dR neigh shape" + str(dR_neigh.shape))
         np.save(nn_data_path + "/dR_neigh.npy", dR_neigh)
-    """
+    """ 
+    
     # if (pm.dR_neigh):
     #     tmp = pd.read_csv(pm.f_train_force, header=None)
     #     force = tmp.values
     #     np.save(nn_data_path + "/force.npy", force)
     
-
+    # converting 
     np.save(nn_data_path + "/feat_scaled.npy", feat_scaled)
     np.save(nn_data_path + "/fors_scaled.npy", fors_scaled)
     np.save(nn_data_path + "/nblist.npy", nblist)
@@ -251,7 +376,10 @@ def process_data(f_train_feat, f_train_dfeat, f_train_dR_neigh,
     np.save(nn_data_path + "/weight_all.npy", weight_all)
     np.save(nn_data_path + "/egroup.npy", egroup)
     np.save(nn_data_path + "/divider.npy", divider)
-    np.save(nn_data_path + "/dfeat_scaled.npy", dfeat_scaled)
+    
+    if pm.is_dfeat_sparse==False:
+        np.save(nn_data_path + "/dfeat_scaled.npy", dfeat_scaled)
+    
     np.save(nn_data_path + "/ind_img.npy", np.array(indImg).reshape(-1))
     np.save(nn_data_path + "/natoms_img.npy", natoms_img)
     # np.save(nn_data_path + "/ep.npy", ep)

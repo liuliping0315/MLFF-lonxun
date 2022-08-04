@@ -6,7 +6,6 @@ import torch.nn.functional as F
 
 isCalcFeat=False
 isFitLinModel=False
-isFitVVModel=False
 isClassify=False
 isRunMd=False                                   #是否训练运行md  default:False
 isRunMd_nn=False
@@ -131,6 +130,9 @@ is_scale = False
 use_storage_scaler = False
 storage_scaler = False
 
+#used to control if dfeat_sparse is used
+is_dfeat_sparse = True
+
 n_epoch = 100
 itype_Ei_mean = [0 for i in range(10)]
 batch_size = 1  # only support bn=1 so far
@@ -156,12 +158,14 @@ Ftype2_para={             # 3b
     'dR2':[0.5 for tmp in range(10)],
     'iflag_ftype':3   # same value for different types, iflag_ftype:1,2,3 when 3, iflag_grid must be 3
 }
+
 Ftype3_para={           # 2bgauss
     'Rc':[5.4 for tmp in range(10)],     # number of elements in Rc = num atom type
     'n2b':[6 for tmp in range(10)],       # number of elements in n2b = num atom type
     'w': [1.0, 1.5, 2.0],
     # 1/w^2 is the \eta in formula, and w is the width of gaussian fuction
 }
+
 Ftype4_para={           # 3bcos
     'Rc':[5.4 for tmp in range(10)],     # number of elements in Rc = num atom type
     'n3b':[20 for tmp in range(10)],
@@ -220,6 +224,7 @@ Ftype8_para={
 kfnn_trainEtot = True
 kfnn_trainEi = False
 kfnn_trainForce = True 
+kfnn_trainEgroup = False
 
 E_tolerance=0.3
 # iflag_ftype=3        # Seems like, this should be in the Ftype1/2_para        # 2 or 3 or 4 when 4, iflag_grid must be 3
@@ -429,8 +434,6 @@ f_data_scaler = d_nnFi+'data_scaler.npy'
 f_Wij_np  = d_nnFi+'Wij.npy'
 """
 
-
-
 trainSetDir=os.path.abspath(trainSetDir)
 #genFeatDir=os.path.abspath(genFeatDir)
 fortranFitSourceDir=os.path.abspath(fortranFitSourceDir)
@@ -459,10 +462,13 @@ f_atoms=os.path.join(mdImageFileDir,'atom.config')
 atomTypeNum=len(atomType)
 nFeats=np.array([realFeatNum,realFeatNum,realFeatNum])
 dir_work = os.path.join(fitModelDir,'NN_output/')
+
 f_train_feat = os.path.join(dir_work,'feat_train.csv')
 f_test_feat = os.path.join(dir_work,'feat_test.csv')
+
 f_train_natoms = os.path.join(dir_work,'natoms_train.csv')
-f_test_natoms = os.path.join(dir_work,'natoms_test.csv')                                 
+f_test_natoms = os.path.join(dir_work,'natoms_test.csv')        
+
 f_train_dfeat = os.path.join(dir_work,'dfeatname_train.csv')
 f_test_dfeat  = os.path.join(dir_work,'dfeatname_test.csv')
 
@@ -480,8 +486,9 @@ f_test_ep  = os.path.join(dir_work,'ep_test.csv')
 
 d_nnEi  = os.path.join(dir_work,'NNEi/')
 d_nnFi  = os.path.join(dir_work,'NNFi/')
+
 f_Einn_model   = d_nnEi+'allEi_final.ckpt'
 f_Finn_model   = d_nnFi+'Fi_final.ckpt'
+
 f_data_scaler = d_nnFi+'data_scaler.npy'
 f_Wij_np  = d_nnFi+'Wij.npy'
-vv_use_3 = 0
