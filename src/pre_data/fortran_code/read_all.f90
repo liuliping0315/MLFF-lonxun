@@ -104,6 +104,9 @@ module read_allnn
         !deallocate(dfeat_sparse)
 
     end subroutine deallo
+
+
+
    
     subroutine read_dfeat(dfeatDir,itype_atom,feat_scale,ipos)
         integer(4)  :: image,nimage,nfeat0_tmp,jj,num_tmp,ii,i_p,i,j,num_tmp_max,ipos
@@ -305,12 +308,12 @@ module read_allnn
 
             ! looping over non-zero elements 
             
-            do jj=1,num_tmp
-                itype=iatom_type(list_neigh(jneigh_tmp(jj),iat_tmp(jj)))
-                dfeat_tmp(1,jj)=dfeat_tmp(1,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
-                dfeat_tmp(2,jj)=dfeat_tmp(2,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
-                dfeat_tmp(3,jj)=dfeat_tmp(3,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
-            enddo
+            !do jj=1,num_tmp
+            !    itype=iatom_type(list_neigh(jneigh_tmp(jj),iat_tmp(jj)))
+            !    dfeat_tmp(1,jj)=dfeat_tmp(1,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
+            !    dfeat_tmp(2,jj)=dfeat_tmp(2,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
+            !    dfeat_tmp(3,jj)=dfeat_tmp(3,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
+            !enddo
             
             ! dfeat_tmp_all (3, dfeat value index  , image index )
             do i=1,num_tmp
@@ -416,10 +419,11 @@ module read_allnn
 
     end subroutine read_dfeat
 
-    subroutine read_dfeat_singleimg(dfeatDir,itype_atom,feat_scale,ipos)
+    subroutine read_dfeat_singleimg(dfeatDir,itype_atom,ipos)
+
         integer(4)  :: image,nimage,nfeat0_tmp,jj,num_tmp,ii,i_p,i,j,num_tmp_max,ipos
         character(*),intent(in) :: dfeatDir
-        real*8,  dimension (:,:),intent(in) ::feat_scale
+        !real*8,  dimension (:,:),intent(in) ::feat_scale
         !real(8),dimension(:),intent(in) :: rad_atom, wp_atom 
         
         integer(4),dimension(:), intent(in) :: itype_atom
@@ -511,7 +515,9 @@ module read_allnn
 
         close(23)
 
-        ! do it again
+        !-------------------------
+        !   form dfeat_tmp_all   
+        !-------------------------       
         open(23,file=trim(dfeatDirname),action="read",form="unformatted",access='stream')
 
         rewind(23)
@@ -519,13 +525,15 @@ module read_allnn
         read(23) ntype_tmp,(nfeat1t(ii),ii=1,ntype_tmp)
         read(23) iatom
 
-        allocate(energy_all(natom,nimage))
-        allocate(force_all(3,natom,nimage))
-        allocate(feat_all(nfeat0m,natom,nimage))
-        allocate(num_neigh_all(natom,nimage))
-        allocate(list_neigh_all(m_neigh,natom,nimage))
-        allocate(num_tmp_all(nimage))
+        ! arrays below are useless 
+
+        !allocate(energy_all(natom,nimage))
+        !allocate(force_all(3,natom,nimage))
+        !allocate(feat_all(nfeat0m,natom,nimage))
+        !allocate(num_neigh_all(natom,nimage))
+        !allocate(list_neigh_all(m_neigh,natom,nimage))
         
+        allocate(num_tmp_all(nimage))
         ! num_tmp_max is used here 
         allocate(dfeat_tmp_all(3,num_tmp_max,nimage))
         allocate(iat_tmp_all(num_tmp_max,nimage))
@@ -536,11 +544,11 @@ module read_allnn
         !allocate(dfeat_sparse(3,dfeat_nnz_total))
 
         !this operation makes dfeat_tmp_all non-sparse
-        dfeat_tmp_all(:,:,:)=0.0
-        
+        dfeat_tmp_all(:,:,:)=0.0        
         iat_tmp_all(:,:)=0
         jneigh_tmp_all(:,:)=0
-        ifeat_tmp_all(:,:)=0     
+        ifeat_tmp_all(:,:)=0   
+
         nfeat0m=nfeat0_tmp
 
 
@@ -601,12 +609,12 @@ module read_allnn
 
             ! looping over non-zero elements 
             
-            do jj=1,num_tmp
-                itype=iatom_type(list_neigh(jneigh_tmp(jj),iat_tmp(jj)))
-                dfeat_tmp(1,jj)=dfeat_tmp(1,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
-                dfeat_tmp(2,jj)=dfeat_tmp(2,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
-                dfeat_tmp(3,jj)=dfeat_tmp(3,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
-            enddo
+            !do jj=1,num_tmp
+            !    itype=iatom_type(list_neigh(jneigh_tmp(jj),iat_tmp(jj)))
+            !    dfeat_tmp(1,jj)=dfeat_tmp(1,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
+            !    dfeat_tmp(2,jj)=dfeat_tmp(2,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
+            !    dfeat_tmp(3,jj)=dfeat_tmp(3,jj)*feat_scale(ifeat_tmp(jj)+ipos,itype)
+            !enddo
             
             ! dfeat_tmp_all (3, dfeat value index  , image index )
             do i=1,num_tmp
@@ -616,6 +624,8 @@ module read_allnn
                 ifeat_tmp_all(i,image)=ifeat_tmp(i)
                 
             enddo   
+
+
 
             deallocate(energy)
             deallocate(force)
@@ -631,9 +641,28 @@ module read_allnn
             deallocate(jneigh_tmp)
             deallocate(ifeat_tmp)
 
-        end do
+        enddo
         close(23)
 
     end subroutine read_dfeat_singleimg
+
+    subroutine deallo_singleimg()
+
+        !deallocate(energy_all)
+        !deallocate(force_all)
+        !deallocate(feat_all)
+        !deallocate(num_neigh_all)
+        !deallocate(list_neigh_all)
+
+        deallocate(iatom)
+
+        deallocate(dfeat_tmp_all)
+        deallocate(iat_tmp_all)
+        deallocate(jneigh_tmp_all)
+        deallocate(ifeat_tmp_all)
+        deallocate(num_tmp_all)
+        !deallocate(dfeat_sparse)
+
+    end subroutine deallo_singleimg
 
 end module read_allnn
