@@ -549,7 +549,7 @@ module read_allnn
         jneigh_tmp_all(:,:)=0
         ifeat_tmp_all(:,:)=0   
 
-        nfeat0m=nfeat0_tmp
+        nfeat0m=nfeat0_tmp  
 
 
         do image=1,nimage
@@ -656,13 +656,40 @@ module read_allnn
 
         deallocate(iatom)
 
-        deallocate(dfeat_tmp_all)
-        deallocate(iat_tmp_all)
-        deallocate(jneigh_tmp_all)
-        deallocate(ifeat_tmp_all)
-        deallocate(num_tmp_all)
-        !deallocate(dfeat_sparse)
-
+        !deallocate(dfeat_tmp_all)
+        !deallocate(iat_tmp_all)
+        !deallocate(jneigh_tmp_all)
+        !deallocate(ifeat_tmp_all)
+        !deallocate(num_tmp_all)    
+        
     end subroutine deallo_singleimg
+
+
+    subroutine deallocate_dfeat_tmp_all()
+        deallocate(dfeat_tmp_all)
+    end subroutine deallocate_dfeat_tmp_all
+
+
+    subroutine deallocate_iat_tmp_all()
+        deallocate(iat_tmp_all)
+    end subroutine deallocate_iat_tmp_all
+
+
+    subroutine deallocate_jneigh_tmp_all() 
+        deallocate(jneigh_tmp_all)
+    end subroutine deallocate_jneigh_tmp_all
+
+
+    subroutine deallocate_ifeat_tmp_all() 
+        deallocate(ifeat_tmp_all) 
+    end subroutine deallocate_ifeat_tmp_all
+
+
+    subroutine deallocate_num_tmp_all()
+        deallocate(num_tmp_all)
+    end subroutine deallocate_num_tmp_all
+
+
+
 
 end module read_allnn
