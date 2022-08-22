@@ -492,3 +492,4 @@ f_Finn_model   = d_nnFi+'Fi_final.ckpt'
 
 f_data_scaler = d_nnFi+'data_scaler.npy'
 f_Wij_np  = d_nnFi+'Wij.npy'
+vv_use_3 = 0

@@ -58,6 +58,7 @@ def makeFitDirAndCopySomeFiles():
         os.makedirs(pm.fitModelDir)
     
     
+    '''
     #midCommand=pm.fortranFitSourceDir.replace('/','\/')
     for fileName in ['calculate_error.py', 'cur_input.py', 'GPR_fit_force_para.py', 'pca_input.py', 'plotvar.py', 'run_cur.py', 'run_pca.py',]:
         fromFilePath=os.path.join(sourceDir,fileName)
@@ -66,6 +67,7 @@ def makeFitDirAndCopySomeFiles():
         # liuliping: deprecate makefile using in calculations
         #command="sed -i 's/\.\./"+midCommand+"/g' "+toFilePath
         #os.system(command)
+    '''
    
     
     
