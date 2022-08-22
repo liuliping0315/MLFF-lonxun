@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 isCalcFeat=False
 isFitLinModel=False
+isFitVVModel=False
 isClassify=False
 isRunMd=False                                   #是否训练运行md  default:False
 isRunMd_nn=False
